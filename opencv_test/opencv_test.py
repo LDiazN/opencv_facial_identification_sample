@@ -22,11 +22,10 @@ class DataBase:
     def add(self, embeddings : Any, id : int):
         self._stored_embeddings[id] = embeddings
 
-    def get(self, embeddings : Any) -> str:
-        for (k, v) in self._stored_embeddings.items():
+    def get(self, embeddings : Any) -> int:
+        for (k, v) in self._stored_embeddings.items():            
             if True in face_recognition.compare_faces([v], embeddings):
                 return k
-
         return None
 
     def recognize(self, embeddings : Any) -> int:
@@ -35,10 +34,10 @@ class DataBase:
             otherwise, return current id and update embeddings
         """
 
-        if (elem := self.get(embeddings)):
+        if (elem := self.get(embeddings)) != None:
             self._stored_embeddings[elem] = embeddings
-            return elem
-        
+            return elem      
+
         new_id = self._id_counter
 
         self.add(embeddings, new_id)
@@ -56,8 +55,6 @@ video_capture = cv2.VideoCapture(0)
 database = DataBase()
 while True:
     ret, frame = video_capture.read()
-
-
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     faces = faceCascade.detectMultiScale(gray,
