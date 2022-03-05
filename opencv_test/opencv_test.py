@@ -5,7 +5,7 @@ import os
 import time
 from typing import Any, Dict, List, Tuple
 
-def drawl_rect_label(cv2_image : Any, x : int, y : int, w : int, h : int, label : str, color : Tuple[int, int, int] = (0,255,0)):
+def drawl_rect_label(cv2_image : Any, x : int, y : int, w : int, h : int, label : str, color : Tuple[int, int, int] = (0,0,255)):
     """
         Try to draw a rectangle with a label in an image
     """
@@ -26,7 +26,7 @@ class DataBase:
         for (k, v) in self._stored_embeddings.items():            
             if True in face_recognition.compare_faces([v], embeddings):
                 return k
-        return None
+        return -1
 
     def recognize(self, embeddings : Any) -> int:
         """
@@ -34,7 +34,7 @@ class DataBase:
             otherwise, return current id and update embeddings
         """
 
-        if (elem := self.get(embeddings)) != None:
+        if (elem := self.get(embeddings)) < 0:
             self._stored_embeddings[elem] = embeddings
             return elem      
 
@@ -77,7 +77,7 @@ while True:
 
         # Draw face label
         for ((x, y, w, h), name) in zip(faces,names):
-            drawl_rect_label(frame, x, y, w, h, str(name), (0,255,0))
+            drawl_rect_label(frame, x, y, w, h, str(name), (0,0,255))
 
     cv2.imshow("Faces found",frame)
 
