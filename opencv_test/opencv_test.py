@@ -22,20 +22,33 @@ class DataBase:
     def add(self, embeddings : Any, id : int):
         self._stored_embeddings[id] = embeddings
 
-    def get(self, embeddings : Any) -> int:
-        for (k, v) in self._stored_embeddings.items():            
-            if True in face_recognition.compare_faces([v], embeddings):
-                return k
-        return None
+    def get(self, embeddings : Any) -> (int,int):
+        best : int = 0x7fffffff 
+        out = -1
+        
+        for (k,v) in self._stored_embeddings.items():
+            if (curr := face_recognition.face_distance([v], embeddings)) < 0.6:
+                if curr < best:
+                    best = curr
+                    out = k
 
-    def recognize(self, embeddings : Any) -> int:
+        if out >= 0:
+            return (out,best)
+        return None 
+        
+#        for (k, v) in self._stored_embeddings.items():            
+#            if True in face_recognition.compare_faces([v], embeddings):
+#               return k
+#        return None
+
+    def recognize(self, embeddings : Any) -> (int,int):
         """
             Check if in database. If not, add it with a new id, 
             otherwise, return current id and update embeddings
         """
 
         if (elem := self.get(embeddings)) != None:
-            self._stored_embeddings[elem] = embeddings
+            self._stored_embeddings[elem[0]] = embeddings
             return elem      
 
         new_id = self._id_counter
@@ -43,7 +56,7 @@ class DataBase:
         self.add(embeddings, new_id)
         self._id_counter += 1
 
-        return new_id
+        return (new_id,0)
 
         
 
@@ -76,8 +89,8 @@ while True:
             names.append(database.recognize(encoding))
 
         # Draw face label
-        for ((x, y, w, h), name) in zip(faces,names):
-            drawl_rect_label(frame, x, y, w, h, str(name), (0,255,0))
+        for ((x, y, w, h), (name,dist)) in zip(faces,names):
+            drawl_rect_label(frame, x, y, w, h, str(name)+" "+str(dist), (0,255,0))
 
     cv2.imshow("Faces found",frame)
 
