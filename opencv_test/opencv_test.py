@@ -15,13 +15,51 @@ def drawl_rect_label(cv2_image : Any, x : int, y : int, w : int, h : int, label 
     image = cv2.rectangle(cv2_image, (x,y), (x + w, y + h), color, 2)
     cv2.putText(image, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
 
+# Anadir criterio de inhabilitacion para la edad
+class FaceRect:
+    """
+        Represents a face rectangle with an update time
+    """
+
+    def __init__(self,x : int, y : int, width : int, height : int, age : float) :
+        self._x = x
+        self._y = y
+        self._width = width
+        self._height = height
+        self._age = age
+
+    @property
+    def age(self) -> float:
+        return self._age
+
+    def as_diagonal(self) -> Tuple[Tuple[int,int],Tuple[int,int]]:
+        return ((self._x,self._y, self._x + self._width), (self._y + self._height))
+
+    def vertices(self) -> List[Tuple[int,int]]:
+        ll,ur = as_diagonal(self)
+        ul, lr = (ll[0], ll[1] + self._height) , (ur[0], ur[1] - self.height)
+        return [ll,ur,ul,lr]
+    
+    def overlap(self, rect_2 : Self) -> bool:
+        ll, ur = as_diagonal(self) 
+
+        for ref in vertices(rect_2):
+            if within(ll,ur,ref) :
+                return true
+        
+        return false
+
+    def within (ll : Tuple[int,int], ur : Tuple[int,int], ref : Tuple[int,int]) -> bool:
+        return (ll[0] <= ref[0] and ll[1] <= ref[1]) or (ref[0] <= ur[0] and ref[1] <= ur[1])
+
 class Face:
     """
         Represents a face object and provides a way to compare faces
     """
-    def __init__(self, face_embeddings : numpy.ndarray, tolerance: float = 0.6):
+    def __init__(self, face_embeddings : numpy.ndarray,  rectangle : FaceRect, tolerance: float = 0.6):
         self._face_embeddings = face_embeddings
         self._tolerance = tolerance
+        self._rectangle = rectangle 
     
     @property
     def face_embeddings(self) -> numpy.ndarray:
@@ -56,6 +94,17 @@ class Face:
         distance = face_recognition.face_distance([self.face_embeddings], face_2.face_embeddings)[0]
 
         return (distance < self.tolerance, distance)
+
+    # extender comparacion con rectangulos y sus criterios
+    def compare_with_rect_info(self, face_2 : Self) -> Tuple[bool, float]:
+        """ 
+            Use to distinguish between faces by distance and embedding criteria:
+            First check if face embeddings are whithin and acceptable distance (they match).
+            If so, check if they're the same face by checking overlaping over their face rectangles.
+        """
+        distance = face_recognition.face_distance([self.face_embeddings], face_2.face_embeddings)[0]
+
+
 
 class DataBase:
 
@@ -129,8 +178,8 @@ while True:
 
         names = []
         # Search for matched faces and their corresponding encondings
-        for encoding in encodings:
-            names.append(database.recognize(Face(encoding)))
+        for (encoding,(x,y,w,h)) in zip(encodings,faces):
+            names.append(database.recognize( Face(encoding,FaceRect(x,y,w,h,time.time()))))
 
         # Draw face label
         for ((x, y, w, h), (name,dist)) in zip(faces,names):
