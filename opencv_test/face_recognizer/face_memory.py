@@ -1,3 +1,8 @@
+"""
+    Implements a face memory manager to store data in runtime about faces and perform
+    common operations over them
+"""
+
 from typing_extensions import Self
 import cv2
 import pickle
@@ -9,13 +14,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy
 
 LIKELYHOOD_TRESHOLD = 0.6
-
-def drawl_rect_label(cv2_image : Any, x : int, y : int, w : int, h : int, label : str, color : Tuple[int, int, int] = (0,255,0)):
-    """
-        Try to draw a rectangle with a label in an image
-    """
-    image = cv2.rectangle(cv2_image, (x,y), (x + w, y + h), color, 2)
-    cv2.putText(image, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
 
 class Face:
     """
@@ -89,7 +87,6 @@ class Face:
         self._last_samples.append(face_2.face_embeddings)
         if len(self._last_samples) > self._stored_samples:
             self._last_samples.pop(0)
-        
 
 class DataBase:
 
@@ -202,51 +199,3 @@ class DataBase:
         
         assert all(r != (-1, -1) for r in results)
         return results
-
-
-cascPathfile = "haarcascade_frontalface_alt2.xml"
-faceCascade = cv2.CascadeClassifier(cascPathfile)
-
-print("Starting capture")
-video_capture = cv2.VideoCapture(0)
-database = DataBase()
-
-faces, names = [],[]
-
-FRAME_RATE = 15
-prev = time.time()
-while True:
-    
-
-    ret, frame = video_capture.read()
-
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    # convert the input frame from BGR to RGB 
-    rgb = cv2.cvtColor(gray, cv2.COLOR_BGR2RGB)
-
-    if (time.time() - prev) > 1./FRAME_RATE: 
-        faces = face_recognition.face_locations(rgb)
-        # the facial embeddings for face in inputP
-        encodings = face_recognition.face_encodings(rgb, faces, model="large")
-        
-        # show faces
-        if faces != ():
-
-            names = []
-            # Search for matched faces and their corresponding encondings
-            for encoding in encodings:
-                names.append(database.recognize(Face(encoding)))
-
-            # Draw face label
-        prev = time.time()
-    for ((top, right, bottom, left), (name,dist)) in zip(faces,names):
-        drawl_rect_label(gray, left, bottom, right - left, top - bottom, str(name)+" "+"{:.3f}".format(dist), (255,255,255))
-                
-
-    cv2.imshow("Faces found",gray)
-
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-
-
-        
