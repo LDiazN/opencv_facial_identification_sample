@@ -18,10 +18,15 @@ def drawl_rect_label(cv2_image : Any, x : int, y : int, w : int, h : int, label 
 # Anadir criterio de inhabilitacion para la edad
 class FaceRect:
     """
-        Represents a face rectangle with an update time
+        Represents a face rectangle (always parallel with x and y axis) with a validity time.
+
+        The rectangle is encoded as:
+            (smallest_x_coordinate, smallest_y_coordinate, width, height) .. y grows to bottom
+
+        Just like it is in openCV: https://docs.opencv.org/3.4/d2/d44/classcv_1_1Rect__.html#details 
     """
 
-    def __init__(self,x : int, y : int, width : int, height : int, age : float) :
+    def __init__(self, x : int, y : int, width : int, height : int, age : float) :
         self._x = x
         self._y = y
         self._width = width
@@ -32,25 +37,63 @@ class FaceRect:
     def age(self) -> float:
         return self._age
 
+    @property
+    def width(self) -> int:
+        return self._width
+
+    @property
+    def height(self) -> int:
+        return self._height
+
+    @property
+    def x(self) -> int:
+        return self._x
+
+    @property
+    def y(self) -> int:
+        return self._y
+
     def as_diagonal(self) -> Tuple[Tuple[int,int],Tuple[int,int]]:
-        return ((self._x,self._y, self._x + self._width), (self._y + self._height))
+        """
+            Alternative rectangle representation using top left and right bottom points.
+        """
+        return ( (self.x,self.y) , (self.x + self.width, self.y + self.height) )
 
     def vertices(self) -> List[Tuple[int,int]]:
-        ll,ur = as_diagonal(self)
-        ul, lr = (ll[0], ll[1] + self._height) , (ur[0], ur[1] - self.height)
-        return [ll,ur,ul,lr]
+        tl, br = self.as_diagonal()
+        bl, tr = (tl[0], tl[1] + self.height) , (tl[0] + self.width, tl[1])
+        return [tl,tr,br,bl]
     
     def overlap(self, rect_2 : Self) -> bool:
-        ll, ur = as_diagonal(self) 
-
-        for ref in vertices(rect_2):
-            if within(ll,ur,ref) :
-                return true
+        """ 
+            Checks if two rectangles overlap.
+        """
+        tl, br = self.as_diagonal() 
+        for ref in rect_2.vertices():
+            if self.within(ref, tl, br) :
+                return True
         
-        return false
+        tl, br = rect_2.as_diagonal()
+        for ref in self.vertices():
+            if rect_2.within(ref, tl, br):
+                return True
+        
+        return False
 
-    def within (ll : Tuple[int,int], ur : Tuple[int,int], ref : Tuple[int,int]) -> bool:
-        return (ll[0] <= ref[0] and ll[1] <= ref[1]) or (ref[0] <= ur[0] and ref[1] <= ur[1])
+    def within (self, ref : Tuple[int,int], tl : Tuple[int,int], br : Tuple[int,int]) -> bool:
+        """ 
+            Given points describing a rectangle, and an point 'ref', tell if
+            'ref' is whithin the rectangle.
+        """
+        return tl[0] <= ref[0] and tl[1] <= ref[1] and ref[0] <= br[0] and ref[1] <= br[1]
+
+    def deprecated(self) -> bool: 
+        """
+            Used to control validity of a FaceRectangle. Those older than 2s are not elegible.
+        """
+        return time.time() - self.age > 2.0
+
+
 
 class Face:
     """
@@ -75,6 +118,13 @@ class Face:
         """
         return self._tolerance
 
+    @property
+    def rectangle(self) -> FaceRect:
+        """ 
+            Return face rectangle.
+        """
+        return self._rectangle
+
     def compare(self, face_2 : Self) -> bool:
         """
             Checks if two faces are the same
@@ -95,16 +145,6 @@ class Face:
 
         return (distance < self.tolerance, distance)
 
-    # extender comparacion con rectangulos y sus criterios
-    def compare_with_rect_info(self, face_2 : Self) -> Tuple[bool, float]:
-        """ 
-            Use to distinguish between faces by distance and embedding criteria:
-            First check if face embeddings are whithin and acceptable distance (they match).
-            If so, check if they're the same face by checking overlaping over their face rectangles.
-        """
-        distance = face_recognition.face_distance([self.face_embeddings], face_2.face_embeddings)[0]
-
-
 
 class DataBase:
 
@@ -115,20 +155,26 @@ class DataBase:
     def add(self, face : Face, id : int):
         self._stored_embeddings[id] = face
 
-    def add_new(self, face : Face):
+    def add_new(self, face : Face) -> int:
         id = self._id_counter
         self._id_counter += 1
         self.add(face, id)
 
+        return id
+
     def get(self, face : Face) -> Optional[Tuple[int,float]]:
         best : float = 10000000
         out = -1
-        
+
         for (k,v) in self._stored_embeddings.items():
             match, dist = v.compare_and_distance(face)
             if match and dist < best:
-                best = dist
-                out = k
+                if not v.rectangle.deprecated(): 
+                    if v.rectangle.overlap(face.rectangle):
+                        return (k,v) 
+                else:
+                    best = dist
+                    out = k
 
         if out >= 0:
             return (out,best)
@@ -144,10 +190,7 @@ class DataBase:
             self._stored_embeddings[elem[0]] = face
             return elem      
 
-        new_id = self._id_counter
-
-        self.add(face, new_id)
-        self._id_counter += 1
+        new_id = self.add_new(face)
 
         return (new_id,0)
 
@@ -179,16 +222,13 @@ while True:
         names = []
         # Search for matched faces and their corresponding encondings
         for (encoding,(x,y,w,h)) in zip(encodings,faces):
-            names.append(database.recognize( Face(encoding,FaceRect(x,y,w,h,time.time()))))
+            names.append(database.recognize( Face(encoding, FaceRect(x,y,w,h,time.time()))) )
 
         # Draw face label
         for ((x, y, w, h), (name,dist)) in zip(faces,names):
-            drawl_rect_label(frame, x, y, w, h, str(name)+" "+str(dist), (0,255,0))
+            drawl_rect_label(frame, x, y, w, h, str(name)+" "+str(w)+" "+str(h), (0,255,0))
 
     cv2.imshow("Faces found",frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
-
-
-        
