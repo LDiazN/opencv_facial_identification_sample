@@ -1,3 +1,8 @@
+"""
+    Implements a face memory manager to store data in runtime about faces and perform
+    common operations over them
+"""
+
 from typing_extensions import Self
 import cv2
 import pickle
@@ -10,102 +15,17 @@ import numpy
 
 LIKELYHOOD_TRESHOLD = 0.6
 
-def drawl_rect_label(cv2_image : Any, x : int, y : int, w : int, h : int, label : str, color : Tuple[int, int, int] = (0,255,0)):
-    """
-        Try to draw a rectangle with a label in an image
-    """
-    image = cv2.rectangle(cv2_image, (x,y), (x + w, y + h), color, 2)
-    cv2.putText(image, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
-
-# Anadir criterio de inhabilitacion para la edad
-class FaceRect:
-    """
-        Represents a face rectangle (always parallel with x and y axis) with a validity time.
-
-        The rectangle is encoded as:
-            (smallest_x_coordinate, smallest_y_coordinate, width, height) .. y grows to bottom
-
-        Just like it is in openCV: https://docs.opencv.org/3.4/d2/d44/classcv_1_1Rect__.html#details 
-    """
-
-    def __init__(self, x : int, y : int, width : int, height : int, age : float) :
-        self._x = x
-        self._y = y
-        self._width = width
-        self._height = height
-        self._age = age
-
-    @property
-    def age(self) -> float:
-        return self._age
-
-    @property
-    def width(self) -> int:
-        return self._width
-
-    @property
-    def height(self) -> int:
-        return self._height
-
-    @property
-    def x(self) -> int:
-        return self._x
-
-    @property
-    def y(self) -> int:
-        return self._y
-
-    def as_diagonal(self) -> Tuple[Tuple[int,int],Tuple[int,int]]:
-        """
-            Alternative rectangle representation using top left and right bottom points.
-        """
-        return ( (self.x,self.y) , (self.x + self.width, self.y + self.height) )
-
-    def vertices(self) -> List[Tuple[int,int]]:
-        tl, br = self.as_diagonal()
-        bl, tr = (tl[0], tl[1] + self.height) , (tl[0] + self.width, tl[1])
-        return [tl,tr,br,bl]
-    
-    def overlap(self, rect_2 : Self) -> bool:
-        """ 
-            Checks if two rectangles overlap.
-        """
-        tl, br = self.as_diagonal() 
-        for ref in rect_2.vertices():
-            if self.within(ref, tl, br) :
-                return True
-        
-        tl, br = rect_2.as_diagonal()
-        for ref in self.vertices():
-            if rect_2.within(ref, tl, br):
-                return True
-        
-        return False
-
-    def within (self, ref : Tuple[int,int], tl : Tuple[int,int], br : Tuple[int,int]) -> bool:
-        """ 
-            Given points describing a rectangle, and an point 'ref', tell if
-            'ref' is whithin the rectangle.
-        """
-        return tl[0] <= ref[0] and tl[1] <= ref[1] and ref[0] <= br[0] and ref[1] <= br[1]
-
-    def deprecated(self) -> bool: 
-        """
-            Used to control validity of a FaceRectangle. Those older than 2s are not elegible.
-        """
-        return time.time() - self.age > 2.0
-
-
-
 class Face:
     """
         Represents a face object and provides a way to compare faces
     """
-    def __init__(self, face_embeddings : numpy.ndarray,  rectangle : FaceRect, tolerance: float = 0.6):
+    def __init__(self, face_embeddings : numpy.ndarray, tolerance: float = 0.6, stored_samples : int = 31, variance_multiplier : float = 1.2):
         self._face_embeddings = face_embeddings
         self._tolerance = tolerance
-        self._rectangle = rectangle 
-    
+        self._last_samples  = []
+        self._stored_samples = stored_samples
+        self._variance_multiplier = variance_multiplier
+
     @property
     def face_embeddings(self) -> numpy.ndarray:
         """
@@ -139,13 +59,6 @@ class Face:
 
         return self._tolerance
 
-    @property
-    def rectangle(self) -> FaceRect:
-        """ 
-            Return face rectangle.
-        """
-        return self._rectangle
-
     def compare(self, face_2 : Self) -> bool:
         """
             Checks if two faces are the same
@@ -165,6 +78,15 @@ class Face:
         distance = face_recognition.face_distance([self._face_embeddings], face_2.face_embeddings)[0]
 
         return (distance < self.tolerance, distance)
+
+    def update(self, face_2 : Self):
+        """
+            Update data about this face from another one
+        """
+        self._face_embeddings = face_2.face_embeddings
+        self._last_samples.append(face_2.face_embeddings)
+        if len(self._last_samples) > self._stored_samples:
+            self._last_samples.pop(0)
 
 class DataBase:
 
@@ -187,16 +109,12 @@ class DataBase:
     def get(self, face : Face) -> Optional[Tuple[int,float]]:
         best : float = 10000000
         out = -1
-
+        
         for (k,v) in self._stored_embeddings.items():
             match, dist = v.compare_and_distance(face)
             if match and dist < best:
-                if not v.rectangle.deprecated(): 
-                    if v.rectangle.overlap(face.rectangle):
-                        return (k,v) 
-                else:
-                    best = dist
-                    out = k
+                best = dist
+                out = k
 
         if out >= 0:
             return (out,best)
@@ -216,10 +134,13 @@ class DataBase:
         """
 
         if (elem := self.get(face)) != None:
-            self._stored_embeddings[elem[0]] = face
+            self.replace(elem[0], face)
             return elem      
 
-        new_id = self.add_new(face)
+        new_id = self._id_counter
+
+        self.add(face, new_id)
+        self._id_counter += 1
 
         return (new_id,0)
 
@@ -278,47 +199,3 @@ class DataBase:
         
         assert all(r != (-1, -1) for r in results)
         return results
-
-
-cascPathfile = "haarcascade_frontalface_alt2.xml"
-faceCascade = cv2.CascadeClassifier(cascPathfile)
-
-print("Starting capture")
-video_capture = cv2.VideoCapture(0)
-database = DataBase()
-
-faces, names = [],[]
-
-FRAME_RATE = 15
-prev = time.time()
-while True:
-    
-
-    ret, frame = video_capture.read()
-
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    # convert the input frame from BGR to RGB 
-    rgb = cv2.cvtColor(gray, cv2.COLOR_BGR2RGB)
-
-    if (time.time() - prev) > 1./FRAME_RATE: 
-        faces = face_recognition.face_locations(rgb)
-        # the facial embeddings for face in inputP
-        encodings = face_recognition.face_encodings(rgb, faces, model="large")
-        
-        # show faces
-        if faces != ():
-
-           names = []
-            # Search for matched faces and their corresponding encondings
-           for (encoding, (x,y,w,h)) in zip(encodings,faces):
-               names.append( database.recognize( Face(encoding, FaceRect(x,y,w,h,time.time()) ) ) )
-
-            # Draw face label
-        prev = time.time()
-    for ((top, right, bottom, left), (name,dist)) in zip(faces,names):
-        drawl_rect_label(gray, left, bottom, right - left, top - bottom, str(name) +" "+str(dist), (255,255,255))
-                
-    cv2.imshow("Faces found",gray)
-
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
