@@ -202,13 +202,6 @@ class DataBase:
             return (out,best)
         return None 
         
-    def replace(self, key : int, new_face : Face):
-        """
-            Change existent face with key 'key' with face 'face'
-        """
-        self._stored_embeddings[key].update(new_face)
-
-
     def recognize(self, face : Face) -> Tuple[int, float]:
         """
             Check if in database. If not, add it with a new id, 
@@ -223,62 +216,6 @@ class DataBase:
 
         return (new_id,0)
 
-    def recognize_many(self, faces : List[Face]) -> List[Tuple[int, float]]:
-        """
-            For each face, return its id and distance to the predicted face
-        """
-        MAX_VAL = 10000000
-
-        # If no known faces, just create a new one for each
-        if not self._stored_embeddings:
-            results = [(self.add_new(face), 0) for face in faces]
-            return results
-            
-        # Create a matrix with distance between each known face and new face
-        items = list(self._stored_embeddings.items())
-        face_embeddings = [face.face_embeddings for (_,face) in items]
-
-        # Matrix with distance between each known face to each new face
-        distances_matrix = numpy.array([face_recognition.face_distance(face_embeddings, face.face_embeddings) for face in faces])
-        # Matrix that tells if this faces do match 
-        less_than_tolerance = numpy.vectorize(lambda x: x < LIKELYHOOD_TRESHOLD)
-        matching_matrix = less_than_tolerance(distances_matrix)
-        min_per_col = [numpy.argmin(c) for c in distances_matrix.T]
-
-        change = True
-        while change:
-            change = False
-
-            # Tie break, if two columns contain the same min, then set the highest of both as infinite
-            for (i, min_row_1) in enumerate(min_per_col):
-                for j  in range(i+1, len(min_per_col)):
-                    min_row_2 = min_per_col[j]
-                    if min_row_1 == min_row_2:
-                        if distances_matrix[min_row_1][i] < distances_matrix[min_row_2][j]:
-                            distances_matrix[min_row_2][j] = MAX_VAL
-                        else:
-                            distances_matrix[min_row_1][i] = MAX_VAL
-                        change = True
-
-            min_per_col = [numpy.argmin(c) for c in distances_matrix.T]
-            matching_matrix = less_than_tolerance(distances_matrix)
-                
-        # Now that we have unique mins, we have to check which rows require a new id 
-        results : List[Tuple[int, float]]= [(-1,-1.0) for _ in range(len(faces))]
-        for (i, row) in enumerate(matching_matrix):
-            if not any(row):
-                new_id = self._id_counter
-                self.add_new(Face(face_embeddings[i]))
-                results[i] = (new_id, 0)
-
-        # now assign nearest for those that are min
-        for (col_index, row_index) in enumerate(min_per_col):
-            if matching_matrix[row_index][col_index]:
-                results[row_index] = (items[col_index][0], distances_matrix[row_index, col_index])
-        
-        assert all(r != (-1, -1) for r in results)
-        return results
-
 
 cascPathfile = "haarcascade_frontalface_alt2.xml"
 faceCascade = cv2.CascadeClassifier(cascPathfile)
@@ -289,11 +226,10 @@ database = DataBase()
 
 faces, names = [],[]
 
-FRAME_RATE = 15
+FRAME_RATE = 30
 prev = time.time()
 while True:
     
-
     ret, frame = video_capture.read()
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -316,7 +252,7 @@ while True:
             # Draw face label
         prev = time.time()
     for ((top, right, bottom, left), (name,dist)) in zip(faces,names):
-        drawl_rect_label(gray, left, bottom, right - left, top - bottom, str(name) +" "+str(dist), (255,255,255))
+        drawl_rect_label(gray, left, bottom, right - left, top - bottom, str(name) , (255,255,255))
                 
     cv2.imshow("Faces found",gray)
 
